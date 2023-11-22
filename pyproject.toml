@@ -1,0 +1,10 @@
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+extend-exclude = ["project_venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["api", "routeable_app"]
