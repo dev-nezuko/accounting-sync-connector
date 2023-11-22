@@ -1,0 +1,11 @@
+services:
+  web:
+    build: .
+    env_file: .env
+    ports:
+      - "127.0.0.1:8003:8003"
+    volumes:
+      - sqlite-data:/data
+
+volumes:
+  sqlite-data:
