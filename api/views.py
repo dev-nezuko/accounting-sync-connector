@@ -4,7 +4,7 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.shortcuts import redirect
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
-from decouple import config
+from django.conf import settings
 from .ledger import LedgerClient, bill_summary, vendor_summary
 
 @staff_member_required(login_url='/admin/login/')
@@ -32,7 +32,7 @@ def quickbooks_callback_handler(request):
     code, realm = request.GET.get('code'), request.GET.get('realmId')
     if request.GET.get('error') or not code or not realm:
         return JsonResponse({'error': 'Authorization was declined or incomplete.'}, status=400)
-    expected = config('QBOOK_COMPANY_ID', default='')
+    expected = settings.QUICKBOOKS.get('company_id', '')
     if expected and realm != expected:
         return JsonResponse({'error': 'This company is not configured for this demo.'}, status=400)
     try:

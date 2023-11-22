@@ -13,7 +13,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 from pathlib import Path
 import secrets
 from django.core.exceptions import ImproperlyConfigured
-from decouple import config
+from decouple import Csv, config
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -22,7 +22,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-DEBUG = config('DJANGO_DEBUG', default=True, cast=bool)
+# Debug is opt-in so a missing .env fails closed instead of exposing tracebacks.
+DEBUG = config('DJANGO_DEBUG', default=False, cast=bool)
 SECRET_KEY = config('DJANGO_SECRET_KEY', default='')
 if not SECRET_KEY:
     if not DEBUG:
@@ -32,7 +33,10 @@ if not SECRET_KEY:
 # SECURITY WARNING: don't run with debug turned on in production!
 
 
-ALLOWED_HOSTS = config('DJANGO_ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = config('DJANGO_ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
+
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 
 
 # Application definition
@@ -148,12 +152,10 @@ SOCIALACCOUNT_PROVIDERS = {
 }
 
 QUICKBOOKS = {
-    'client_id': config("QBOOK_CLIENT_ID", None),
-    'secret_key': config("QBOOK_CLIENT_SECRET", None),
-    'redirect_uri': config("QBOOK_REDIRECT_URI", None),  # This is the redirect URL we need to set in the QuickBooks
-    # Developer Portal.
-    'qbook_env': config("QBOOK_ENVIRONMENT", None),
-    'company_id': config("QBOOK_COMPANY_ID", None),
+    'client_id': config('QBOOK_CLIENT_ID', default=''),
+    'secret_key': config('QBOOK_CLIENT_SECRET', default=''),
+    # Must match a redirect URI registered in the Intuit developer portal.
+    'redirect_uri': config('QBOOK_REDIRECT_URI', default=''),
+    'qbook_env': config('QBOOK_ENVIRONMENT', default='sandbox'),
+    'company_id': config('QBOOK_COMPANY_ID', default=''),
 }
-
-

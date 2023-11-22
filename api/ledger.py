@@ -3,7 +3,8 @@ from intuitlib.enums import Scopes
 from quickbooks import QuickBooks
 from quickbooks.objects.bill import Bill
 from quickbooks.objects.vendor import Vendor
-from decouple import config
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 
 
 class LedgerClientBase:
@@ -30,11 +31,12 @@ class LedgerClientBase:
 
 class LedgerClient(LedgerClientBase):
     def __init__(self, bill_id=1, vendor_id=56):
+        qbo = quickbooks_settings()
         self.auth_client = AuthClient(
-            client_id=config("QBOOK_CLIENT_ID", None),
-            client_secret=config("QBOOK_CLIENT_SECRET", None),
-            environment=config("QBOOK_ENVIRONMENT", None),
-            redirect_uri=config("QBOOK_REDIRECT_URI", None),
+            client_id=qbo["client_id"],
+            client_secret=qbo["secret_key"],
+            environment=qbo["qbook_env"],
+            redirect_uri=qbo["redirect_uri"],
         )
         self.client = None
         self.bill_id = bill_id
@@ -90,6 +92,16 @@ class LedgerClient(LedgerClientBase):
             self.single_vendor_data = single_vendor
         except Exception as e:
             raise RuntimeError('Accounting provider request failed.') from None
+
+
+def quickbooks_settings():
+    qbo = settings.QUICKBOOKS
+    missing = [name for name in ("client_id", "secret_key", "redirect_uri") if not qbo.get(name)]
+    if missing:
+        raise ImproperlyConfigured("QuickBooks settings are incomplete: " + ", ".join(missing))
+    if qbo.get("qbook_env") not in ("sandbox", "production"):
+        raise ImproperlyConfigured("QBOOK_ENVIRONMENT must be 'sandbox' or 'production'.")
+    return qbo
 
 
 def bill_summary(bill):
