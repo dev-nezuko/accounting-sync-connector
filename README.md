@@ -1,37 +1,56 @@
 # QuickBooks sandbox connector
 
-A Django proof of concept that starts an Intuit accounting authorization flow and returns a small JSON snapshot of bills and vendors after the callback. Despite the repository name, it does **not** perform recurring synchronization, reconcile records, persist ledger entries or write accounting transactions.
+A small Django proof of concept that runs the Intuit OAuth 2.0 authorization flow for a QuickBooks Online sandbox company and returns a one-off JSON snapshot of bills and vendors. It is useful as a compact, tested reference for the parts of an accounting integration that are easy to get wrong: the OAuth `state` round trip, keeping tokens and provider errors server-side, and pinning a connection to an expected company.
 
-The original project calls itself Routable. The implemented provider is QuickBooks; Xero credentials in the old example configuration did not correspond to an implemented Xero connector and have been removed.
+Despite the repository name, it does **not** synchronise anything. There is no recurring job, no reconciliation, no persisted ledger data and no write-back to QuickBooks. The Django project is still called `routeable_app` after the product it was prototyped for.
 
-## How the demo works
+## How the flow works
 
 ```mermaid
 sequenceDiagram
     actor Staff
     participant Django
     participant Intuit
-    Staff->>Django: Start connection while signed in as staff
-    Django->>Django: Store random state with 10-minute expiry
-    Django-->>Staff: Redirect to Intuit authorization
+    Staff->>Django: GET /initiate_ledger_process/ (signed in as staff)
+    Django->>Django: Store random state, issued now, max age 10 minutes
+    Django-->>Staff: 302 to Intuit authorization page
     Staff->>Intuit: Approve sandbox company
-    Intuit-->>Django: Callback with state, code and realmId
-    Django->>Django: Validate and consume state; check configured company
-    Django->>Intuit: Exchange code and read bills/vendors
-    Django-->>Staff: JSON snapshot, no-store response
+    Intuit-->>Django: GET /accounts/quickbooks/login/callback/?state&code&realmId
+    Django->>Django: Pop state, compare in constant time, check age and company
+    Django->>Intuit: Exchange code for tokens, read bills and vendors
+    Django-->>Staff: 200 JSON snapshot, Cache-Control: no-store
 ```
 
-The callback checks single-use browser state **before** creating a provider client or exchanging a code. Authorization codes are not stored in the Django session. An optional configured company ID restricts accepted callbacks; the validated callback realm is passed to QuickBooks.
+| File | Responsibility |
+| --- | --- |
+| `api/views.py` | Staff-only views, OAuth state checks, company pin, error mapping |
+| `api/ledger.py` | `LedgerClient`: Intuit authorization URL, token exchange, bill/vendor reads |
+| `routeable_app/settings.py` | Environment-driven settings, including the `QUICKBOOKS` block |
+| `api/tests.py` | 28 offline tests; every Intuit and QuickBooks call is mocked |
 
-The SDK's state parameter is documented in the [Intuit AuthClient reference](https://oauth-pythonclient.readthedocs.io/en/latest/reference/oauth-client.html). This demo does not implement a separate refresh-token storage and lifecycle service.
+## Run it
 
-## Prepare a local sandbox
+You need your own app in the [Intuit developer portal](https://developer.intuit.com/app/developer/sandbox) with a sandbox company. Register exactly this redirect URI for it:
 
-Use Python 3.11 in a virtual environment. Requirements retain the original Django 4.2.7 and SDK pins; the complete pinned environment was not installed during this review.
+```text
+http://localhost:8003/accounts/quickbooks/login/callback/
+```
+
+### With Docker (recommended)
 
 ```sh
-git clone <repository-url> accounting-sync-connector
-cd accounting-sync-connector
+cp example.env .env          # then fill QBOOK_CLIENT_ID and QBOOK_CLIENT_SECRET
+docker compose up --build -d
+docker compose exec web python manage.py createsuperuser
+```
+
+Sign in at <http://localhost:8003/admin/> with that account, then open <http://localhost:8003/initiate_ledger_process/>. The container applies migrations on start, stores SQLite on the `sqlite-data` volume and publishes port 8003 on loopback only.
+
+### Without Docker
+
+Python 3.12 (see `.python-version`):
+
+```sh
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -41,48 +60,113 @@ python manage.py createsuperuser
 python manage.py runserver localhost:8003
 ```
 
-Create your own application and company in the [Intuit sandbox](https://developer.intuit.com/app/developer/sandbox), then fill the private `.env` values for client ID, client secret and redirect URI. Register exactly:
+### Configuration
 
-```text
-http://localhost:8003/accounts/quickbooks/login/callback/
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `DJANGO_DEBUG` | `False` | `example.env` turns it on for local use |
+| `DJANGO_SECRET_KEY` | none | Required when debug is off; with debug on a random per-process key is used |
+| `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Comma-separated |
+| `DJANGO_SQLITE_PATH` | `./db.sqlite3` | The Docker image sets `/data/db.sqlite3` |
+| `QBOOK_CLIENT_ID`, `QBOOK_CLIENT_SECRET` | empty | From your Intuit app's Keys tab |
+| `QBOOK_REDIRECT_URI` | empty | Must match the URI registered with Intuit |
+| `QBOOK_ENVIRONMENT` | `sandbox` | Only `sandbox` or `production` are accepted |
+| `QBOOK_COMPANY_ID` | empty | Optional: reject callbacks for any other company (realm) |
+
+Keep the environment on `sandbox`. The snapshot is real financial data when pointed at a real company.
+
+## Requests and responses
+
+These were captured from the Docker setup above with `example.env` copied unchanged, so the Intuit credentials are empty and nothing reaches Intuit.
+
+Anonymous users are sent to the admin login:
+
+```http
+GET /initiate_ledger_process/
+
+HTTP/1.1 302 Found
+Location: /admin/login/?next=/initiate_ledger_process/
 ```
 
-Keep the environment set to `sandbox`. Sign in at `/admin/` as staff before opening `/initiate_ledger_process/`. The example contains no usable credentials or company identifier. If an old client secret or Django signing key was ever used, rotate it at the provider/deployment too; removing Git values does not revoke them or clear external copies.
+A staff user with incomplete Intuit settings gets a generic error, before any SDK object is created:
 
-Local debug mode uses a process-local random signing key when none is configured. Set a private `DJANGO_SECRET_KEY` before disabling `DJANGO_DEBUG`. Production also needs deliberate host, HTTPS, session-cookie and deployment settings; the development configuration is not a hosted service plan.
+```http
+GET /initiate_ledger_process/
 
-## Returned data and boundaries
+HTTP/1.1 502 Bad Gateway
+Content-Type: application/json
 
-A successful callback returns four fields:
+{"error": "Accounting authorization could not be started."}
+```
 
-```json
+A callback that does not match a state issued to this session is refused without exchanging the code:
+
+```http
+GET /accounts/quickbooks/login/callback/?state=guessed&code=synthetic-code&realmId=synthetic-realm
+
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error": "Missing or expired authorization state."}
+```
+
+The successful path below ran the real views and the real `intuit-oauth` URL builder in an offline container. Only Intuit's discovery document, the token exchange and the QuickBooks reads were stubbed, with invented vendors; bill `1` is reported as not found (QuickBooks error 610), as it often is in a fresh sandbox.
+
+```http
+GET /initiate_ledger_process/
+
+HTTP/1.1 302 Found
+Location: https://appcenter.intuit.com/connect/oauth2?client_id=demo-client-id&response_type=code
+          &scope=com.intuit.quickbooks.accounting
+          &redirect_uri=http%3A%2F%2Flocalhost%3A8003%2Faccounts%2Fquickbooks%2Flogin%2Fcallback%2F
+          &state=a9axKuyOH1MgLI2X...
+```
+
+```http
+GET /accounts/quickbooks/login/callback/?state=a9axKuyOH1MgLI2X...&code=demo-code&realmId=9130000000000000
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+
 {
   "single_bill": null,
-  "all_bills": [],
-  "single_vendor": null,
-  "all_vendors": []
+  "all_bills": [
+    {"id": "145", "balance": 250.0, "vendor_name": "Harbor Paper Co."},
+    {"id": "146", "balance": 0, "vendor_name": "Northwind Courier"}
+  ],
+  "single_vendor": {"id": "56", "balance": 250.0, "vendor_name": "Harbor Paper Co."},
+  "all_vendors": [
+    {"id": "56", "balance": 250.0, "vendor_name": "Harbor Paper Co."},
+    {"id": "57", "balance": 0, "vendor_name": "Northwind Courier"}
+  ]
 }
 ```
 
-That is a synthetic response shape, not a captured accounting record. Individual reads default to the original example bill ID `1` and vendor ID `56`; those IDs may not exist in your sandbox. Select suitable IDs in `LedgerClient` for your fixture. Requested IDs now reach the SDK rather than being silently replaced by instance defaults. List reads return at most 50 items and do not page through a complete ledger.
+Replaying the same callback URL returns `400 {"error": "Missing or expired authorization state."}`.
 
-Provider failures return a generic 502 instead of provider exception details. A company mismatch, expired state or replay returns 400. The JSON snapshot is staff-only and marked `Cache-Control: no-store`, but it can still contain financial data: use a sandbox and do not publish screenshots or saved responses with real records.
+## Design notes
 
-## Code and checks
+- **State is single-use.** The callback pops the stored state before comparing it, so a failed guess also burns the real value. Comparison uses `secrets.compare_digest`, and states older than ten minutes are rejected.
+- **No token storage.** Access and refresh tokens live on the `LedgerClient` for one request and are then discarded, so there is no refresh lifecycle to manage. A real sync service would need encrypted token storage, rotation and revocation; that is out of scope here.
+- **Provider errors stay server-side.** `AuthClientError`, `QuickbooksException` and `requests` errors become a generic 502. Other exceptions are not swallowed.
+- **Missing records are `null`.** The single-record reads default to bill `1` and vendor `56`, which may not exist in your sandbox; change them in `LedgerClient`. List reads return at most 50 items and do not page.
+- **QuickBooks minor version 75.** Intuit stopped serving minor versions below 75 on 1 August 2025.
+- **Intuit discovery on every request.** `intuit-oauth` downloads Intuit's OpenID discovery document whenever an `AuthClient` is created, which here is once per view call. That is why the environment is limited to `sandbox`/`production`: any other value would be fetched as a URL.
+- **Fail-closed settings.** Debug is opt-in, a signing key is required without it, and session and CSRF cookies are `Secure` whenever debug is off. Production would still need a real WSGI server, HTTPS, HSTS and a proper database; `manage.py check --deploy` lists what remains.
 
-| File | Responsibility |
-| --- | --- |
-| `api/views.py` | Staff access, OAuth state checks and callback response |
-| `api/ledger.py` | Intuit authorization and QuickBooks read calls |
-| `routeable_app/settings.py` | Django, private environment configuration and session setup |
-| `api/tests.py` | Eight focused OAuth/access and SDK-argument regressions |
+## Tests and lint
 
-The unused alternative client-credentials implementation was removed; it was not used by the routed views. Credentials and tokens remain server-side during a request, but durable encrypted token storage, rotation, revocation, pagination, retries and idempotent synchronization are future work.
+The suite uses in-memory SQLite and separate test settings (`api/test_settings.py`); never deploy with them. It needs no network.
 
 ```sh
-python manage.py test api --settings=api.test_settings
+docker compose run --rm web python manage.py test api --settings=api.test_settings
+docker compose run --rm web ruff check .
 ```
 
-The isolated settings use in-memory SQLite and a separate test URL configuration; never deploy with them. Eight checks passed with Django 4.2 and provider test doubles that fail if called without a mock. No live Intuit authorization, token exchange, company read, SDK integration or full django-allauth runtime was verified. No UI screenshot is appropriate for this JSON-first prototype.
+Without Docker, install `requirements-dev.txt` and run the same two commands.
 
-The repository has no license file; this README does not grant reuse rights.
+## License
+
+MIT, see [LICENSE](LICENSE).
