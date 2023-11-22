@@ -5,7 +5,7 @@ from django.shortcuts import redirect
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from decouple import config
-from .ledger import LedgerClient
+from .ledger import LedgerClient, bill_summary, vendor_summary
 
 @staff_member_required(login_url='/admin/login/')
 @require_GET
@@ -50,7 +50,7 @@ def quickbooks_callback_handler(request):
 def get_single_bill_data(client):
     client.get_bill(client.bill_id)
     bill = client.single_bill_data
-    return None if bill is None else {'id': bill.Id, 'balance': bill.Balance, 'vendor_name': bill.VendorRef.name}
+    return None if bill is None else bill_summary(bill)
 
 def get_all_bills_data(client):
     client.get_bills()
@@ -59,7 +59,7 @@ def get_all_bills_data(client):
 def get_single_vendor_data(client):
     client.get_vendor(client.vendor_id)
     vendor = client.single_vendor_data
-    return None if vendor is None else {'id': vendor.Id, 'balance': vendor.Balance, 'vendor_name': vendor.DisplayName}
+    return None if vendor is None else vendor_summary(vendor)
 
 def get_all_vendors_data(client):
     client.get_vendors()

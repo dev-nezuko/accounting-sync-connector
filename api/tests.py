@@ -53,3 +53,20 @@ class OAuthFlowTests(TestCase):
         client=LedgerClient.__new__(LedgerClient);client.client=object()
         with patch('api.ledger.Bill.get',return_value=SimpleNamespace(Id='sample')) as get:
             client.get_bill('requested-id');get.assert_called_once_with(qb=client.client,id='requested-id')
+    def test_repeated_list_reads_replace_previous_results(self):
+        client=LedgerClient.__new__(LedgerClient);client.client=object()
+        bills=[SimpleNamespace(Id='b1',Balance=10,VendorRef=SimpleNamespace(name='Sample Vendor'))]
+        with patch('api.ledger.Bill.all',return_value=bills):
+            client.get_bills();client.get_bills()
+        self.assertEqual(client.list_bills,[{'id':'b1','balance':10,'vendor_name':'Sample Vendor'}])
+    def test_bill_without_vendor_ref_is_still_summarised(self):
+        client=LedgerClient.__new__(LedgerClient);client.client=object()
+        with patch('api.ledger.Bill.all',return_value=[SimpleNamespace(Id='b2',Balance=0,VendorRef=None)]):
+            client.get_bills()
+        self.assertEqual(client.list_bills,[{'id':'b2','balance':0,'vendor_name':None}])
+    def test_quickbooks_client_requests_a_supported_minor_version(self):
+        client=LedgerClient.__new__(LedgerClient);client.auth_client=SimpleNamespace(get_bearer_token=lambda **kw:None,refresh_token='synthetic-refresh')
+        with patch('api.ledger.QuickBooks') as qb:
+            client.initiate_quick_book(None,'synthetic-code','synthetic-realm')
+        self.assertGreaterEqual(qb.call_args.kwargs['minorversion'],75)
+        self.assertEqual(qb.call_args.kwargs['company_id'],'synthetic-realm')

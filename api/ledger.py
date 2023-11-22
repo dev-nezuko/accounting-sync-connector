@@ -57,16 +57,15 @@ class LedgerClient(LedgerClientBase):
             auth_client=self.auth_client,
             refresh_token=self.auth_client.refresh_token,
             company_id=realm_id,
-            minorversion=1
+            # Intuit stopped serving minor versions below 75 on 2025-08-01.
+            minorversion=75,
         )
 
     def get_bills(self, num=50, vendor_id=None):
         try:
             # Implement this method to retrieve a list of bills
             all_bills = Bill.all(qb=self.client, max_results=min(50, max(1, int(num))))
-            for bill in all_bills:
-                bill_data = {"id": bill.Id, "balance": bill.Balance, "vendor_name": bill.VendorRef.name}
-                self.list_bills.append(bill_data)
+            self.list_bills = [bill_summary(bill) for bill in all_bills]
         except Exception as e:
             raise RuntimeError('Accounting provider request failed.') from None
 
@@ -81,9 +80,7 @@ class LedgerClient(LedgerClientBase):
         try:
             # Implement this method to retrieve a list of vendors
             all_vendors = Vendor.all(qb=self.client, max_results=min(50, max(1, int(num))))
-            for vendor in all_vendors:
-                vendor_data = {"id": vendor.Id, "balance": vendor.Balance, "vendor_name": vendor.DisplayName}
-                self.list_vendors.append(vendor_data)
+            self.list_vendors = [vendor_summary(vendor) for vendor in all_vendors]
         except Exception as e:
             raise RuntimeError('Accounting provider request failed.') from None
 
@@ -93,3 +90,13 @@ class LedgerClient(LedgerClientBase):
             self.single_vendor_data = single_vendor
         except Exception as e:
             raise RuntimeError('Accounting provider request failed.') from None
+
+
+def bill_summary(bill):
+    # VendorRef is optional on QuickBooks bills; a missing one must not fail the whole snapshot.
+    vendor_ref = getattr(bill, "VendorRef", None)
+    return {"id": bill.Id, "balance": bill.Balance, "vendor_name": getattr(vendor_ref, "name", None)}
+
+
+def vendor_summary(vendor):
+    return {"id": vendor.Id, "balance": vendor.Balance, "vendor_name": vendor.DisplayName}
