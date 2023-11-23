@@ -53,9 +53,9 @@ class LedgerClient(LedgerClientBase):
         auth_code = request.session.get('qbo_auth_code')
         return auth_code
 
-    def initiate_quick_book(self, request, auth_code):
+    def initiate_quick_book(self, request, auth_code, realm_id):
         request.session['qbo_auth_code'] = auth_code
-        self.auth_client.get_bearer_token(auth_code)
+        self.auth_client.get_bearer_token(auth_code=auth_code, realm_id=realm_id)
 
         # Initialize and return your QuickBooks connection
         self.client = QuickBooks(
@@ -68,7 +68,9 @@ class LedgerClient(LedgerClientBase):
     def get_bills(self, num=50, vendor_id=None):
         # Implement this method to retrieve a list of bills
         all_bills = Bill.all(qb=self.client, max_results=50)
-        self.list_bills = all_bills
+        for bill in all_bills:
+            bill_data = {"id": bill.Id, "balance": bill.Balance, "vendor_name": bill.VendorRef.name}
+            self.list_bills.append(bill_data)
 
     def get_bill(self, bill_id):
         single_bill = Bill.get(qb=self.client, id=self.bill_id)
@@ -77,7 +79,9 @@ class LedgerClient(LedgerClientBase):
     def get_vendors(self, num=50):
         # Implement this method to retrieve a list of vendors
         all_vendors = Vendor.all(qb=self.client, max_results=50)
-        self.list_vendors = all_vendors
+        for vendor in all_vendors:
+            vendor_data = {"id": vendor.Id, "balance": vendor.Balance, "vendor_name": vendor.DisplayName}
+            self.list_vendors.append(vendor_data)
 
     def get_vendor(self, vendor_id):
         single_vendor = Vendor.get(qb=self.client, id=self.vendor_id)
