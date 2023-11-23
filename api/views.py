@@ -32,6 +32,5 @@ def quickbooks_callback_handler(request):
                 "realm_id": realm_id,
             }
         )
-
     except Exception as e:
         raise e
