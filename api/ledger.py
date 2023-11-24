@@ -66,23 +66,35 @@ class LedgerClient(LedgerClientBase):
         )
 
     def get_bills(self, num=50, vendor_id=None):
-        # Implement this method to retrieve a list of bills
-        all_bills = Bill.all(qb=self.client, max_results=50)
-        for bill in all_bills:
-            bill_data = {"id": bill.Id, "balance": bill.Balance, "vendor_name": bill.VendorRef.name}
-            self.list_bills.append(bill_data)
+        try:
+            # Implement this method to retrieve a list of bills
+            all_bills = Bill.all(qb=self.client, max_results=50)
+            for bill in all_bills:
+                bill_data = {"id": bill.Id, "balance": bill.Balance, "vendor_name": bill.VendorRef.name}
+                self.list_bills.append(bill_data)
+        except Exception as e:
+            print(f"Error getting bills: {e}")
 
     def get_bill(self, bill_id):
-        single_bill = Bill.get(qb=self.client, id=self.bill_id)
-        self.single_bill_data = single_bill
+        try:
+            single_bill = Bill.get(qb=self.client, id=self.bill_id)
+            self.single_bill_data = single_bill
+        except Exception as e:
+            print(f"Error getting bill: {e}")
 
     def get_vendors(self, num=50):
-        # Implement this method to retrieve a list of vendors
-        all_vendors = Vendor.all(qb=self.client, max_results=50)
-        for vendor in all_vendors:
-            vendor_data = {"id": vendor.Id, "balance": vendor.Balance, "vendor_name": vendor.DisplayName}
-            self.list_vendors.append(vendor_data)
+        try:
+            # Implement this method to retrieve a list of vendors
+            all_vendors = Vendor.all(qb=self.client, max_results=50)
+            for vendor in all_vendors:
+                vendor_data = {"id": vendor.Id, "balance": vendor.Balance, "vendor_name": vendor.DisplayName}
+                self.list_vendors.append(vendor_data)
+        except Exception as e:
+            print(f"Error getting vendors: {e}")
 
     def get_vendor(self, vendor_id):
-        single_vendor = Vendor.get(qb=self.client, id=self.vendor_id)
-        self.single_vendor_data = single_vendor
+        try:
+            single_vendor = Vendor.get(qb=self.client, id=self.vendor_id)
+            self.single_vendor_data = single_vendor
+        except Exception as e:
+            print(f"Error getting vendor: {e}")
